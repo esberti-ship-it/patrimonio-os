@@ -538,6 +538,8 @@ td.r { text-align: right; }
     <button class="nbtn" onclick="goto('bancos')" id="nb-bancos"><span class="ni">◉</span> Por Banco <span class="nbadge" id="nb-bancos-count">4</span></button>
     <div class="nav-sec">Análise</div>
     <button class="nbtn" onclick="goto('variacao')" id="nb-variacao"><span class="ni">◎</span> Variações</button>
+    <div class="nav-sec admin-only" id="nav-sec-gestao" style="display:none">Gestão</div>
+    <button class="nbtn admin-only" id="nb-gestao" onclick="goto('gestao')" style="display:none"><span class="ni">⚙</span> Gestão</button>
   </div>
   <div class="sb-bot">
     <div class="sb-user" id="sbUser">
@@ -690,6 +692,51 @@ td.r { text-align: right; }
   </div>
 </div>
 
+<!-- ═══ GESTÃO ══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-gestao">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Gestão <em>de dados</em></div>
+      <div class="page-sub">Operações administrativas sobre o portfólio</div>
+    </div>
+  </div>
+
+  <!-- Zerar mês -->
+  <div class="card" style="max-width:560px;margin-bottom:20px">
+    <div class="card-title" style="margin-bottom:4px">🗑 Zerar posições de um mês</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+      Remove todas as colunas de valores de um mês específico do portfólio. O mês é excluído do histórico e os dados são salvos no Supabase.
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div>
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">SELECIONAR MÊS</label>
+        <select id="gestaoMonthSel" style="background:var(--card2);color:var(--text1);border:1px solid var(--border2);border-radius:6px;padding:6px 10px;font-size:13px;min-width:130px">
+        </select>
+      </div>
+      <div style="align-self:flex-end">
+        <button class="modal-confirm ready" id="gestaoZerarBtn" onclick="gestaoZerarMes()" style="padding:7px 18px;font-size:13px">
+          🗑 Zerar mês
+        </button>
+      </div>
+    </div>
+    <div id="gestaoStatus" style="font-size:12px;min-height:18px"></div>
+  </div>
+
+  <!-- Preview das posições do mês selecionado -->
+  <div class="card" style="max-width:900px">
+    <div class="card-title" style="margin-bottom:12px">Posições no mês selecionado</div>
+    <div id="gestaoPreviewWrap" style="overflow-x:auto">
+      <table class="tbl" id="gestaoPreviewTbl">
+        <thead><tr>
+          <th>Banco</th><th>Tipo</th><th style="max-width:220px">Produto</th>
+          <th class="r">Valor</th><th class="r">Var%</th>
+        </tr></thead>
+        <tbody id="gestaoPreviewBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 </main>
 
 <!-- ═══ UPDATE MODAL ════════════════════════════════════════════════════ -->
@@ -705,9 +752,21 @@ td.r { text-align: right; }
         <div class="modal-drop-sub">.xlsx ou .xls — mesmo formato da Pasta1</div>
       </div>
       <div class="modal-status" id="modalStatus"></div>
-      <div class="modal-btns">
+      <!-- Step 1: botão inicial -->
+      <div class="modal-btns" id="modalBtns1">
         <button class="modal-cancel" onclick="closeUpdateModal()">Cancelar</button>
-        <button class="modal-confirm" id="modalConfirm" onclick="applyNewData()">Aplicar dados</button>
+        <button class="modal-confirm" id="modalConfirm" onclick="askMonthTarget()">Aplicar dados</button>
+      </div>
+      <!-- Step 2: pergunta mês -->
+      <div id="modalMonthStep" style="display:none;margin-top:14px">
+        <div style="font-size:12px;color:var(--text2);text-align:center;margin-bottom:10px">
+          Esses dados correspondem a qual mês?
+        </div>
+        <div class="modal-btns">
+          <button class="modal-cancel" onclick="cancelMonthStep()">← Voltar</button>
+          <button class="modal-confirm ready" id="btnMonthCurrent" onclick="applyNewData('current')">📅 Mês atual</button>
+          <button class="modal-confirm ready" id="btnMonthNext" onclick="applyNewData('next')" style="background:var(--copper);color:#1a1006">📅 Próximo mês</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1396,6 +1455,11 @@ function showApp() {
   document.querySelector('.shell').style.display = '';
   document.getElementById('sbUserName').textContent = '👤 ' + currentUser.username;
   document.getElementById('sbAdminBtn').style.display = currentUser.role === 'admin' ? 'inline-block' : 'none';
+  // Mostrar/esconder item Gestão na sidebar
+  const isAdmin = currentUser.role === 'admin';
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
+  });
   // Mostrar indicador do modo
   const modeEl = document.getElementById('sbModeIndicator');
   if (modeEl) modeEl.textContent = SUPA_LIVE ? '☁ cloud' : '💾 local';
@@ -1695,15 +1759,48 @@ function parseXlsx(rows){
   return { raw, months: monthDefs.map(m => m.label) };
 }
 
-async function applyNewData(){
+function askMonthTarget(){
+  if(!pendingData){ return; }
+  // Ocultar botões normais, mostrar pergunta de mês
+  document.getElementById('modalBtns1').style.display = 'none';
+  document.getElementById('modalMonthStep').style.display = 'block';
+  // Calcular label do próximo mês
+  const lastReal = pendingData.months[pendingData.months.length - 1];
+  const [mon, yr] = lastReal.split('/');
+  const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const mi = MONTHS_PT.indexOf(mon);
+  const nextMon = mi === 11 ? MONTHS_PT[0] : MONTHS_PT[mi + 1];
+  const nextYr  = mi === 11 ? String(Number(yr) + 1).slice(-2) : yr;
+  document.getElementById('btnMonthCurrent').textContent = `📅 Mês atual (${lastReal})`;
+  document.getElementById('btnMonthNext').textContent    = `📅 Próximo mês (${nextMon}/${nextYr})`;
+}
+
+function cancelMonthStep(){
+  document.getElementById('modalMonthStep').style.display = 'none';
+  document.getElementById('modalBtns1').style.display = 'flex';
+}
+
+async function applyNewData(monthTarget){
   if(!pendingData) return;
   // Substituir RAW globalmente
   RAW.length = 0;
   pendingData.raw.forEach(r => RAW.push(r));
 
+  // Ajustar meses se "próximo mês"
+  let finalMonths = [...pendingData.months];
+  if(monthTarget === 'next'){
+    const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    finalMonths = finalMonths.map(label => {
+      const [mon, yr] = label.split('/');
+      const mi = MONTHS_PT.indexOf(mon);
+      const nMon = mi === 11 ? MONTHS_PT[0] : MONTHS_PT[mi + 1];
+      const nYr  = mi === 11 ? String(Number(yr) + 1).slice(-2) : yr;
+      return `${nMon}/${nYr}`;
+    });
+  }
   // Atualizar MONTHS com novos meses reais
   MONTHS.length = 0;
-  pendingData.months.forEach(m => MONTHS.push(m));
+  finalMonths.forEach(m => MONTHS.push(m));
   ALL_MONTHS.length = 0;
   MONTHS.forEach(m => ALL_MONTHS.push(m));
   PROJ_MONTHS.forEach(m => ALL_MONTHS.push(m));
@@ -1788,6 +1885,127 @@ function render(pg){
   else if(pg==='evolucao') renderEvo();
   else if(pg==='bancos') renderBancos();
   else if(pg==='variacao') renderVar();
+  else if(pg==='gestao') renderGestao();
+}
+
+// ─── GESTÃO ──────────────────────────────────────────────────────────────────
+function renderGestao(){
+  if(!currentUser || currentUser.role !== 'admin') return;
+
+  // Popular select com TODOS os meses: reais + projetados
+  // value = "real:i" ou "proj:j"
+  const sel = document.getElementById('gestaoMonthSel');
+  const realOpts = MONTHS.map((m,i) =>
+    `<option value="real:${i}">${m} (real)</option>`
+  ).join('');
+  const projOpts = PROJ_MONTHS.map((m,j) =>
+    `<option value="proj:${j}">${m} ◈ estimativa</option>`
+  ).join('');
+  sel.innerHTML = realOpts + projOpts;
+  // Selecionar último mês real por padrão
+  sel.value = `real:${MONTHS.length - 1}`;
+  sel.onchange = renderGestaoPreview;
+  renderGestaoPreview();
+}
+
+function renderGestaoPreview(){
+  const val = document.getElementById('gestaoMonthSel').value;
+  const [tipo, idx] = val.split(':');
+  const mi = parseInt(idx);
+  const isProj = tipo === 'proj';
+  const allMi = isProj ? MONTHS.length + mi : mi; // índice em ALL_MONTHS
+
+  const Pv = v => v == null ? '—' : 'R$ ' + Number(v).toLocaleString('pt-BR', {minimumFractionDigits:0,maximumFractionDigits:0});
+  const Pp = v => v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2).replace('.',',') + '%';
+
+  const rows = RAW.map(r => {
+    let val, vari;
+    if(isProj){
+      // Valor projetado: último real × (1 + taxa)^(steps)
+      const lastReal = r.months[MONTHS.length - 1];
+      const key = r.banco + '||' + r.produto;
+      const rate = (PROJ_RATES[key] ?? 1.0) / 100;
+      const steps = mi + 1;
+      val = lastReal?.val != null ? lastReal.val * Math.pow(1 + rate, steps) : null;
+      vari = rate * 100;
+    } else {
+      const mv = r.months[mi];
+      val  = mv?.val  ?? null;
+      vari = mv?.var  ?? null;
+    }
+    const color = vari == null ? '' : vari >= 0 ? 'color:var(--green)' : 'color:var(--red)';
+    const projTag = isProj ? ' style="opacity:.65"' : '';
+    return `<tr${projTag}>
+      <td style="font-size:12px;color:var(--gold)">${esc(r.banco)}</td>
+      <td style="font-size:11px;color:var(--muted)">${esc(r.tipo||'')}</td>
+      <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.produto)}</td>
+      <td class="r" style="font-family:'IBM Plex Mono',monospace;font-size:12px">${Pv(val)}</td>
+      <td class="r" style="font-family:'IBM Plex Mono',monospace;font-size:12px;${color}">${Pp(vari)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('gestaoPreviewBody').innerHTML = rows;
+}
+
+async function gestaoZerarMes(){
+  const selVal = document.getElementById('gestaoMonthSel').value;
+  const [tipo, idx] = selVal.split(':');
+  const mi = parseInt(idx);
+  const isProj = tipo === 'proj';
+  const mesLabel = isProj ? PROJ_MONTHS[mi] : MONTHS[mi];
+  const statusEl = document.getElementById('gestaoStatus');
+
+  const aviso = isProj
+    ? `Tem certeza que deseja remover o mês projetado ${mesLabel}?
+
+Ele será excluído das estimativas.`
+    : `Tem certeza que deseja ZERAR todas as posições de ${mesLabel}?
+
+Essa ação remove o mês do histórico real e não pode ser desfeita.`;
+  if(!confirm(aviso)) return;
+
+  if(isProj){
+    // Remover de PROJ_MONTHS
+    PROJ_MONTHS.splice(mi, 1);
+  } else {
+    // Remover o mês real de MONTHS e de cada posição em RAW
+    MONTHS.splice(mi, 1);
+    RAW.forEach(r => {
+      if(r.months && r.months.length > mi) r.months.splice(mi, 1);
+    });
+    // Ajustar state
+    dashMonth  = Math.min(dashMonth,  Math.max(0, MONTHS.length - 1));
+    bancoMonth = Math.min(bancoMonth, Math.max(0, MONTHS.length - 1));
+    varMonth   = Math.min(varMonth,   Math.max(0, MONTHS.length - 1));
+  }
+
+  // Reconstruir ALL_MONTHS
+  ALL_MONTHS.length = 0;
+  MONTHS.forEach(m => ALL_MONTHS.push(m));
+  PROJ_MONTHS.forEach(m => ALL_MONTHS.push(m));
+
+  // Recalcular projeções
+  recalcProjRates();
+
+  // Salvar no Supabase (apenas dados reais)
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = '⟳ Salvando…';
+  if(!isProj) await savePortfolioData([...RAW], [...MONTHS]);
+  statusEl.style.color = 'var(--green)';
+  statusEl.textContent = `✓ Mês ${mesLabel} removido com sucesso.`;
+
+  // Atualizar sidebar date range
+  if(MONTHS.length > 0){
+    document.querySelector('.sb-bot-label').innerHTML =
+      `<div class="pulse"></div> ${MONTHS[0]} → ${MONTHS[MONTHS.length-1]}`;
+  }
+
+  // Re-renderizar todos os painéis e gestão
+  renderDash();
+  renderEvo();
+  renderBancos();
+  renderVar();
+  renderGestao();
+  setTimeout(() => { statusEl.textContent = ''; }, 4000);
 }
 
 // Init — controlado pelo sistema de autenticação (initAuth acima)
