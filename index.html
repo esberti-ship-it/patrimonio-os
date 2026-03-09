@@ -760,12 +760,17 @@ td.r { text-align: right; }
       <!-- Step 2: pergunta mês -->
       <div id="modalMonthStep" style="display:none;margin-top:14px">
         <div style="font-size:12px;color:var(--text2);text-align:center;margin-bottom:10px">
-          Esses dados correspondem a qual mês?
+          A qual mês esses dados correspondem?
+        </div>
+        <div style="display:flex;justify-content:center;gap:8px;margin-bottom:12px">
+          <select id="modalMonthSel" style="background:var(--card2);color:var(--text1);border:1px solid var(--border2);border-radius:6px;padding:6px 12px;font-size:13px;font-family:'Epilogue',sans-serif">
+          </select>
+          <select id="modalYearSel" style="background:var(--card2);color:var(--text1);border:1px solid var(--border2);border-radius:6px;padding:6px 12px;font-size:13px;font-family:'Epilogue',sans-serif">
+          </select>
         </div>
         <div class="modal-btns">
           <button class="modal-cancel" onclick="cancelMonthStep()">← Voltar</button>
-          <button class="modal-confirm ready" id="btnMonthCurrent" onclick="applyNewData('current')">📅 Mês atual</button>
-          <button class="modal-confirm ready" id="btnMonthNext" onclick="applyNewData('next')" style="background:var(--copper);color:#1a1006">📅 Próximo mês</button>
+          <button class="modal-confirm ready" onclick="applyNewData('custom')">✓ Confirmar mês</button>
         </div>
       </div>
     </div>
@@ -1767,15 +1772,29 @@ function askMonthTarget(){
   // Ocultar botões normais, mostrar pergunta de mês
   document.getElementById('modalBtns1').style.display = 'none';
   document.getElementById('modalMonthStep').style.display = 'block';
-  // Calcular label do próximo mês
+
+  const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  // Popular select de mês
+  const selMon = document.getElementById('modalMonthSel');
+  selMon.innerHTML = MONTHS_PT.map(m => `<option value="${m}">${m}</option>`).join('');
+
+  // Popular select de ano: ano atual e próximos 2
+  const selYr = document.getElementById('modalYearSel');
+  const thisYear = new Date().getFullYear();
+  selYr.innerHTML = [-1, 0, 1, 2].map(d => {
+    const y = String(thisYear + d).slice(-2);
+    return `<option value="${y}">${thisYear + d}</option>`;
+  }).join('');
+
+  // Pré-selecionar o próximo mês em relação ao último mês detectado no Excel
   const lastReal = pendingData.months[pendingData.months.length - 1];
   const [mon, yr] = lastReal.split('/');
-  const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   const mi = MONTHS_PT.indexOf(mon);
   const nextMon = mi === 11 ? MONTHS_PT[0] : MONTHS_PT[mi + 1];
-  const nextYr  = mi === 11 ? String(Number(yr) + 1).slice(-2) : yr;
-  document.getElementById('btnMonthCurrent').textContent = `📅 Mês atual (${lastReal})`;
-  document.getElementById('btnMonthNext').textContent    = `📅 Próximo mês (${nextMon}/${nextYr})`;
+  const nextYr  = mi === 11 ? String(Number(yr) + 1).padStart(2,'0') : yr;
+  selMon.value = nextMon;
+  selYr.value  = nextYr;
 }
 
 function cancelMonthStep(){
@@ -1789,14 +1808,35 @@ async function applyNewData(monthTarget){
   RAW.length = 0;
   pendingData.raw.forEach(r => RAW.push(r));
 
-  // Ajustar meses se "próximo mês"
+  // Ajustar meses conforme escolha do usuário
+  const MONTHS_PT_A = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   let finalMonths = [...pendingData.months];
-  if(monthTarget === 'next'){
-    const MONTHS_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  if(monthTarget === 'custom'){
+    // Usuário escolheu mês e ano manualmente
+    const chosenMon = document.getElementById('modalMonthSel').value;
+    const chosenYr  = document.getElementById('modalYearSel').value;
+    // O último mês do Excel é mapeado para chosenMon/chosenYr
+    // Os demais meses anteriores são calculados em reverso
+    const chosenMi = MONTHS_PT_A.indexOf(chosenMon);
+    const chosenYrN = parseInt('20' + chosenYr);
+    // Quantos meses o Excel tem?
+    const nMonths = pendingData.months.length;
+    finalMonths = [];
+    for(let i = 0; i < nMonths; i++){
+      // i=0 é o mais antigo, i=nMonths-1 é o mais recente (= chosen)
+      const offset = i - (nMonths - 1); // negativo para os anteriores
+      let absMonth = chosenMi + offset;
+      let yr = chosenYrN;
+      while(absMonth < 0){ absMonth += 12; yr -= 1; }
+      while(absMonth > 11){ absMonth -= 12; yr += 1; }
+      finalMonths.push(`${MONTHS_PT_A[absMonth]}/${String(yr).slice(-2)}`);
+    }
+  } else if(monthTarget === 'next'){
     finalMonths = finalMonths.map(label => {
       const [mon, yr] = label.split('/');
-      const mi = MONTHS_PT.indexOf(mon);
-      const nMon = mi === 11 ? MONTHS_PT[0] : MONTHS_PT[mi + 1];
+      const mi = MONTHS_PT_A.indexOf(mon);
+      const nMon = mi === 11 ? MONTHS_PT_A[0] : MONTHS_PT_A[mi + 1];
       const nYr  = mi === 11 ? String(Number(yr) + 1).slice(-2) : yr;
       return `${nMon}/${nYr}`;
     });
