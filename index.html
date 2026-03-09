@@ -1149,12 +1149,13 @@ function getVal(r, mi) {
 
 function renderBancos(){
   const mi = bancoMonth;
-  const isProj = mi >= 4;
-  const steps = isProj ? mi - 3 : 0;
+  const lastReal = MONTHS.length - 1;
+  const isProj = mi > lastReal;
+  const steps = isProj ? mi - lastReal : 0;
 
   // Abas: reais (dourado) + projeção (cobre), scroll horizontal se necessário
   document.getElementById('bancoTabs').innerHTML = ALL_MONTHS.map((m, i) => {
-    const proj = i >= 4;
+    const proj = i >= MONTHS.length;
     const active = i === mi;
     return `<button class="mtab${proj?' proj':''}${active?' active':''}" onclick="setBancoMonth(${i})">${m}${proj?'<span class="proj-badge">EST</span>':''}</button>`;
   }).join('');
