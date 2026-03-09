@@ -543,6 +543,7 @@ td.r { text-align: right; }
     <div class="sb-user" id="sbUser">
       <span class="sb-user-name" id="sbUserName">—</span>
       <div class="sb-user-actions">
+        <span id="sbModeIndicator" style="font-size:9px;color:var(--muted);align-self:center"></span>
         <button class="sb-user-admin-btn" id="sbAdminBtn" style="display:none" onclick="openAdmin()">⚙ Admin</button>
         <button class="sb-logout-btn" onclick="doLogout()">Sair</button>
       </div>
@@ -1259,52 +1260,91 @@ function renderVar(){
 // ─── AUTH & USER MANAGEMENT ──────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════
-//  SUPABASE CONFIG — substitua pelas suas credenciais
+//  SUPABASE CONFIG
+//  Quando tiver a URL correta, substitua SUPA_URL abaixo
 // ═══════════════════════════════════════════════════════════
 const SUPA_URL  = 'https://cgVgpODDygH9QCf5310h.supabase.co';
 const SUPA_KEY  = 'sb_publishable_iX3bwm1_0_GrWhh_PxKUEw_pD3oqyPg';
-const supa = supabase.createClient(SUPA_URL, SUPA_KEY);
 
-let currentUser = null;  // { id, email, username, role }
+let supa = null;
+let SUPA_LIVE = false;
+try { supa = supabase.createClient(SUPA_URL, SUPA_KEY); } catch(e) {}
 
-// ─── LOGIN ───────────────────────────────────────────────────
+async function checkSupaLive() {
+  if (!supa) return false;
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch(SUPA_URL + '/auth/v1/health', {
+      headers: { apikey: SUPA_KEY }, signal: ctrl.signal
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+// ─── AUTH LOCAL (fallback) ────────────────────────────────
+const LS_USERS   = 'patrimonio_os_users';
+const LS_SESSION = 'patrimonio_os_session';
+function hashPass(s){ let h=0; for(let i=0;i<s.length;i++) h=(Math.imul(31,h)+s.charCodeAt(i))|0; return 'h'+Math.abs(h).toString(36); }
+function getUsers(){ try{ return JSON.parse(localStorage.getItem(LS_USERS))||[]; }catch{ return []; } }
+function saveUsers(a){ localStorage.setItem(LS_USERS,JSON.stringify(a)); }
+function getSession(){ try{ return JSON.parse(localStorage.getItem(LS_SESSION)); }catch{ return null; } }
+function saveSession(u){ localStorage.setItem(LS_SESSION,JSON.stringify(u)); }
+function clearSession(){ localStorage.removeItem(LS_SESSION); }
+function bootstrapUsers(){
+  const u=getUsers();
+  if(!u.length){ u.push({username:'admin',password:hashPass('admin123'),role:'admin',createdAt:new Date().toLocaleDateString('pt-BR')}); saveUsers(u); }
+}
+
+let currentUser = null;
+
+// ─── LOGIN HÍBRIDO (Supabase se disponível, local como fallback) ─
 async function doLogin() {
-  const usernameOrEmail = document.getElementById('loginUser').value.trim();
-  const password        = document.getElementById('loginPass').value;
-  const errEl           = document.getElementById('loginError');
-  errEl.textContent     = '';
-  if (!usernameOrEmail || !password) { errEl.textContent = 'Preencha usuário e senha.'; return; }
-  const btn = document.getElementById('loginBtn');
+  const usernameInput = document.getElementById('loginUser').value.trim();
+  const password      = document.getElementById('loginPass').value;
+  const errEl         = document.getElementById('loginError');
+  const btn           = document.getElementById('loginBtn');
+  errEl.textContent   = '';
+  if (!usernameInput || !password) { errEl.textContent = 'Preencha usuário e senha.'; return; }
+
   btn.textContent = '⟳ Entrando...'; btn.disabled = true;
 
-  // Supabase Auth usa email — buscar email pelo username se não for email
-  let email = usernameOrEmail;
-  if (!usernameOrEmail.includes('@')) {
-    // Buscar email pelo username na tabela profiles (via função pública)
-    const { data, error } = await supa
-      .from('profiles')
-      .select('email')
-      .eq('username', usernameOrEmail)
-      .single();
-    if (error || !data) { errEl.textContent = 'Usuário não encontrado.'; return; }
-    email = data.email;
+  // Tentar Supabase primeiro
+  SUPA_LIVE = await checkSupaLive();
+
+  if (SUPA_LIVE) {
+    let email = usernameInput;
+    if (!usernameInput.includes('@')) {
+      const { data } = await supa.from('profiles').select('email').eq('username', usernameInput).single();
+      if (data?.email) email = data.email;
+      else email = `${usernameInput}@patrimonioos.internal`;
+    }
+    const { data: authData, error: authErr } = await supa.auth.signInWithPassword({ email, password });
+    if (!authErr && authData?.session) {
+      await loadCurrentUser(authData.user);
+      await loadPortfolioData();
+      btn.textContent = 'Entrar'; btn.disabled = false;
+      showApp(); fetchBtcPrice(); setInterval(fetchBtcPrice, 5*60*1000); renderDash();
+      return;
+    }
+    // Se falhou no Supabase, tenta local
   }
 
-  const { data: authData, error: authErr } = await supa.auth.signInWithPassword({ email, password });
-  if (authErr) { errEl.textContent = 'Usuário ou senha incorretos.'; document.getElementById('loginPass').value = ''; btn.textContent = 'Entrar'; btn.disabled = false; return; }
-
-  await loadCurrentUser(authData.user);
-  await loadPortfolioData();
-  showApp();
-  fetchBtcPrice();
-  setInterval(fetchBtcPrice, 5 * 60 * 1000);
-  renderDash();
+  // Fallback: login local
+  const users = getUsers();
+  const user  = users.find(u => u.username === usernameInput && u.password === hashPass(password));
+  btn.textContent = 'Entrar'; btn.disabled = false;
+  if (!user) { errEl.textContent = 'Usuário ou senha incorretos.'; document.getElementById('loginPass').value = ''; return; }
+  currentUser = { id: null, email: null, username: user.username, role: user.role };
+  saveSession(user);
+  showApp(); fetchBtcPrice(); setInterval(fetchBtcPrice, 5*60*1000); renderDash();
 }
 
 // ─── LOGOUT ──────────────────────────────────────────────────
 async function doLogout() {
-  await supa.auth.signOut();
+  if (SUPA_LIVE && supa) await supa.auth.signOut();
   currentUser = null;
+  clearSession();
   document.getElementById('loginUser').value = '';
   document.getElementById('loginPass').value = '';
   document.getElementById('loginError').textContent = '';
@@ -1326,37 +1366,27 @@ async function loadCurrentUser(authUser) {
 
 // ─── CARREGAR DADOS DO PORTFÓLIO ──────────────────────────────
 async function loadPortfolioData() {
-  const { data, error } = await supa
-    .from('portfolio_data')
-    .select('raw_data, months')
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .single();
-  if (data) {
-    RAW.length = 0;
-    data.raw_data.forEach(r => RAW.push(r));
-    MONTHS.length = 0;
-    data.months.forEach(m => MONTHS.push(m));
-    ALL_MONTHS.length = 0;
-    ALL_MONTHS.push(...MONTHS, ...PROJ_MONTHS);
+  if (!supa) return;
+  const { data } = await supa.from('portfolio_data').select('raw_data, months')
+    .order('updated_at', { ascending: false }).limit(1).single();
+  if (data?.raw_data?.length) {
+    RAW.length = 0; data.raw_data.forEach(r => RAW.push(r));
+    MONTHS.length = 0; data.months.forEach(m => MONTHS.push(m));
+    ALL_MONTHS.length = 0; ALL_MONTHS.push(...MONTHS, ...PROJ_MONTHS);
     recalcProjRates();
-    dashMonth  = MONTHS.length - 1;
-    bancoMonth = MONTHS.length - 1;
-    varMonth   = MONTHS.length - 1;
+    dashMonth = bancoMonth = varMonth = MONTHS.length - 1;
   }
 }
 
 // ─── SALVAR PORTFÓLIO NO SUPABASE ─────────────────────────────
 async function savePortfolioData(raw, months) {
-  // Apaga registro anterior e insere novo (upsert de registro único)
-  const { error } = await supa.from('portfolio_data').upsert({
-    id: '00000000-0000-0000-0000-000000000001',  // ID fixo — registro único
-    raw_data:   raw,
-    months:     months,
+  if (!supa || !SUPA_LIVE) return;
+  await supa.from('portfolio_data').upsert({
+    id: '00000000-0000-0000-0000-000000000001',
+    raw_data: raw, months: months,
     updated_at: new Date().toISOString(),
     updated_by: currentUser?.id
   });
-  if (error) console.error('Erro ao salvar portfólio:', error.message);
 }
 
 // ─── MOSTRAR APP ──────────────────────────────────────────────
@@ -1366,6 +1396,9 @@ function showApp() {
   document.querySelector('.shell').style.display = '';
   document.getElementById('sbUserName').textContent = '👤 ' + currentUser.username;
   document.getElementById('sbAdminBtn').style.display = currentUser.role === 'admin' ? 'inline-block' : 'none';
+  // Mostrar indicador do modo
+  const modeEl = document.getElementById('sbModeIndicator');
+  if (modeEl) modeEl.textContent = SUPA_LIVE ? '☁ cloud' : '💾 local';
 }
 
 function openAdmin() {
@@ -1382,17 +1415,24 @@ function closeAdmin() {
 
 // ─── ADMIN: GERENCIAR USUÁRIOS ────────────────────────────────
 async function renderAdminUsers() {
-  const { data: users } = await supa.from('profiles').select('username, role, email, created_at').order('created_at');
-  document.getElementById('adminUsersTbody').innerHTML = (users||[]).map(u => `
+  let users = [];
+  if (SUPA_LIVE && supa) {
+    const { data } = await supa.from('profiles').select('username, role, email, created_at').order('created_at');
+    users = (data||[]).map(u => ({
+      username: u.username, role: u.role,
+      createdAt: u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—'
+    }));
+  } else {
+    users = getUsers().map(u => ({ username: u.username, role: u.role, createdAt: u.createdAt||'—' }));
+  }
+  document.getElementById('adminUsersTbody').innerHTML = users.map(u => `
     <tr>
       <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">${esc(u.username)}</td>
       <td><span class="user-role-badge ${u.role}">${u.role}</span></td>
-      <td style="color:var(--muted);font-size:12px">${u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—'}</td>
+      <td style="color:var(--muted);font-size:12px">${u.createdAt}</td>
       <td style="text-align:right">
         <button class="admin-del-btn" onclick="deleteUser('${esc(u.username)}')"
-          ${u.username===currentUser?.username?'disabled title="Não pode remover o próprio usuário"':''}>
-          Remover
-        </button>
+          ${u.username===currentUser?.username?'disabled title="Não pode remover o próprio usuário"':''}>Remover</button>
       </td>
     </tr>`).join('');
 }
@@ -1402,26 +1442,22 @@ async function addUser() {
   const password = document.getElementById('newPassword').value;
   const role     = document.getElementById('newRole').value;
   const msgEl    = document.getElementById('adminFormMsg');
-  const fail = (m) => { msgEl.textContent = m; msgEl.className = 'admin-form-msg err'; };
-
+  const fail = m => { msgEl.textContent = m; msgEl.className = 'admin-form-msg err'; };
   if (!username || !password) return fail('⚠ Preencha usuário e senha.');
   if (password.length < 6) return fail('⚠ Senha deve ter ao menos 6 caracteres.');
   if (!/^[a-zA-Z0-9._-]+$/.test(username)) return fail('⚠ Use apenas letras, números, . _ -');
 
-  // Email fictício baseado no username (Supabase exige email)
-  const email = `${username}@patrimonioos.internal`;
-
-  const { data: signUpData, error: signUpErr } = await supa.auth.admin
-    ? await supa.auth.admin.createUser({ email, password, email_confirm: true })
-    : await supa.auth.signUp({ email, password });
-
-  if (signUpErr) return fail('⚠ ' + signUpErr.message);
-
-  const uid = signUpData?.user?.id;
-  if (uid) {
-    await supa.from('profiles').upsert({ id: uid, username, role, email });
+  if (SUPA_LIVE && supa) {
+    const email = `${username}@patrimonioos.internal`;
+    const { data: sd, error: se } = await supa.auth.signUp({ email, password });
+    if (se) return fail('⚠ ' + se.message);
+    if (sd?.user?.id) await supa.from('profiles').upsert({ id: sd.user.id, username, role, email });
+  } else {
+    const users = getUsers();
+    if (users.find(u => u.username === username)) return fail('⚠ Usuário já existe.');
+    users.push({ username, password: hashPass(password), role, createdAt: new Date().toLocaleDateString('pt-BR') });
+    saveUsers(users);
   }
-
   document.getElementById('newUsername').value = '';
   document.getElementById('newPassword').value = '';
   document.getElementById('newRole').value = 'viewer';
@@ -1434,27 +1470,43 @@ async function addUser() {
 async function deleteUser(username) {
   if (username === currentUser?.username) return;
   if (!confirm(`Remover o usuário "${username}"?`)) return;
-  const { data } = await supa.from('profiles').select('id').eq('username', username).single();
-  if (data?.id) await supa.auth.admin?.deleteUser(data.id);
-  await supa.from('profiles').delete().eq('username', username);
+  if (SUPA_LIVE && supa) {
+    const { data } = await supa.from('profiles').select('id').eq('username', username).single();
+    await supa.from('profiles').delete().eq('username', username);
+  } else {
+    saveUsers(getUsers().filter(u => u.username !== username));
+  }
   renderAdminUsers();
 }
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ─── INIT: verificar sessão existente ────────────────────────
+// ─── INIT ─────────────────────────────────────────────────────
+bootstrapUsers();
 (async function initAuth() {
   document.querySelector('.shell').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
 
-  const { data: { session } } = await supa.auth.getSession();
-  if (session?.user) {
-    await loadCurrentUser(session.user);
-    await loadPortfolioData();
-    showApp();
-    fetchBtcPrice();
-    setInterval(fetchBtcPrice, 5 * 60 * 1000);
-    renderDash();
+  // Tentar restaurar sessão Supabase
+  SUPA_LIVE = await checkSupaLive();
+  if (SUPA_LIVE && supa) {
+    const { data: { session } } = await supa.auth.getSession();
+    if (session?.user) {
+      await loadCurrentUser(session.user);
+      await loadPortfolioData();
+      showApp(); fetchBtcPrice(); setInterval(fetchBtcPrice, 5*60*1000); renderDash();
+      return;
+    }
+  }
+
+  // Tentar restaurar sessão local
+  const session = getSession();
+  if (session) {
+    const valid = getUsers().find(u => u.username === session.username && u.password === session.password);
+    if (valid) {
+      currentUser = { id: null, email: null, username: valid.username, role: valid.role };
+      showApp(); fetchBtcPrice(); setInterval(fetchBtcPrice, 5*60*1000); renderDash();
+    }
   }
 })();
 
