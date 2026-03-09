@@ -101,7 +101,7 @@ body::after {
 .pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); animation: pulse 2s infinite; flex-shrink: 0; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 /* MAIN */
-.main { overflow-y: auto; }
+.main { overflow-y: auto; height: 100vh; }
 .page { display: none; flex-direction: column; padding: 40px 44px; gap: 28px; min-height: 100vh; }
 .page.active { display: flex; }
 .page.active > * { animation: fadeUp 0.3s ease both; }
