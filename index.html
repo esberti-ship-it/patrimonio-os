@@ -786,7 +786,8 @@ const PROJ_RATES = {"XP||CRI BIOMA XP  - ABR/2036":0.3033,"XP||CRI REDE D'OR  - 
 
 // Projetar valor de um ativo para N meses à frente do Mar/26
 function projVal(r, steps) {
-  const base = r.months[3].val;
+  const lastRealIdx = MONTHS.length - 1;
+  const base = r.months[lastRealIdx]?.val;
   if (!base || base <= 0) return null;
   const key = r.banco + '||' + r.produto;
   const rate = (PROJ_RATES[key] ?? 1.0) / 100;
@@ -818,7 +819,7 @@ const Pp = v => (v>=0?'+':'')+v.toFixed(2)+'%';
 const getMonthLabel = mi => ALL_MONTHS[mi] || MONTHS[mi] || (PROJ_MONTHS[mi - MONTHS.length]) || ('M'+mi);
 const totalForMonth = (mi, excCC=true) => RAW.reduce((s,r)=>{
   if(excCC && r.tipo==='CC') return s;
-  return s + (r.months[mi].val || 0);
+  return s + (r.months[mi]?.val || 0);
 }, 0);
 
 // State — bancoMonth: 0-3 = real, 4-12 = projeção (4=Abr/26 ... 12=Dez/26)
@@ -871,7 +872,7 @@ function renderDash(){
   const prev  = mi>0 ? totalForMonth(mi-1) : null;
   const delta = prev ? total - prev : null;
   const deltaPct = prev && prev>0 ? (delta/prev*100) : null;
-  const totalAll = totalForMonth(3);
+  const totalAll = totalForMonth(MONTHS.length - 1);
   const total0   = totalForMonth(0);
   const gainTotal = totalAll - total0;
 
@@ -883,7 +884,7 @@ function renderDash(){
   else { sdEl.textContent = '—'; }
 
   // KPIs
-  const pos = RAW.filter(r=>r.tipo!=='CC' && r.months[mi].val).length;
+  const pos = RAW.filter(r=>r.tipo!=='CC' && r.months[mi]?.val).length;
   // Variação = mês selecionado vs anterior
   const varLabel = mi>0 ? `vs ${MONTHS[mi-1]}` : '—';
   // Ganho acumulado = mês selecionado vs anterior (mesmo conceito, em R$)
@@ -908,7 +909,7 @@ function renderDash(){
   // Bank cards
   const banks = ['XP','Itau','Bradesco','ML'];
   document.getElementById('bankCards').innerHTML = banks.map(b=>{
-    const bv = RAW.filter(r=>r.banco===b&&r.tipo!=='CC').reduce((s,r)=>s+(r.months[mi].val||0),0);
+    const bv = RAW.filter(r=>r.banco===b&&r.tipo!=='CC').reduce((s,r)=>s+(r.months[mi]?.val||0),0);
     const pct = total>0?(bv/total*100):0;
     return `<div class="bank-card" style="border-color:${BANCO_COLORS[b]}20;cursor:pointer" onclick="gotoWithBanco('${b}')">
       <div class="bc-name" style="color:${BANCO_COLORS[b]}">${b}</div>
@@ -931,7 +932,7 @@ function renderInstPie(mi){
     key: b,
     label: b,
     color: BANCO_COLORS[b],
-    val: RAW.filter(r=>r.banco===b&&r.tipo!=='CC').reduce((s,r)=>s+(r.months[mi].val||0),0)
+    val: RAW.filter(r=>r.banco===b&&r.tipo!=='CC').reduce((s,r)=>s+(r.months[mi]?.val||0),0)
   })).filter(g=>g.val>0).sort((a,b)=>b.val-a.val);
 
   const total = groups.reduce((s,g)=>s+g.val,0);
@@ -982,7 +983,7 @@ function renderDonut(mi){
   const groups = {};
   RAW.forEach(r=>{
     if(r.tipo==='CC') return;
-    const v = r.months[mi].val||0;
+    const v = r.months[mi]?.val||0;
     if(v<=0) return;
     let grp = 'outros';
     for(const [k,g] of Object.entries(TYPE_GROUPS)){
@@ -1034,7 +1035,7 @@ function renderDonut(mi){
 
     offset+=angle;
   });
-  const pos = RAW.filter(r=>r.tipo!=='CC'&&r.months[mi].val).length;
+  const pos = RAW.filter(r=>r.tipo!=='CC'&&r.months[mi]?.val).length;
   document.getElementById('donutCtr').textContent = pos;
   document.getElementById('donutLegend').innerHTML = sorted.map(([grpKey,g])=>`
     <div class="dl-row" onclick="gotoWithTipo('${grpKey}')" title="Ver ${g.label} em Por Banco">
@@ -1050,7 +1051,7 @@ function renderTopPositions(mi){
   const top = RAW.filter(r=>r.tipo!=='CC').sort((a,b)=>(b.months[mi].val||0)-(a.months[mi].val||0)).slice(0,10);
   const max = top[0]?.months[mi].val||1;
   document.getElementById('topPositions').innerHTML = `<div class="bar-wrap">${top.map(r=>{
-    const v = r.months[mi].val||0;
+    const v = r.months[mi]?.val||0;
     const w = (v/max*100).toFixed(1);
     const c = BANCO_COLORS[r.banco]||'var(--gold)';
     const short = r.produto.length>30?r.produto.slice(0,30)+'…':r.produto;
@@ -1060,7 +1061,7 @@ function renderTopPositions(mi){
 
 // ─── EVOLUÇÃO ────────────────────────────────────────────────────────────────
 function renderEvo(){
-  const totals = [0,1,2,3].map(mi=>totalForMonth(mi));
+  const totals = MONTHS.map((_,mi)=>totalForMonth(mi));
   const max0 = totals[0];
 
   document.getElementById('evoMonths').innerHTML = MONTHS.map((m,i)=>{
@@ -1118,8 +1119,8 @@ function renderEvo(){
   document.getElementById('evoBancos').innerHTML = `<table>
     <thead><tr><th>Banco</th>${MONTHS.map(m=>`<th class="r">${m}</th>`).join('')}<th class="r">Variação Total</th></tr></thead>
     <tbody>${banks.map(b=>{
-      const vals = [0,1,2,3].map(mi=>RAW.filter(r=>r.banco===b&&r.tipo!=='CC').reduce((s,r)=>s+(r.months[mi].val||0),0));
-      const delta = vals[3]-vals[0];
+      const vals = MONTHS.map((_,mi)=>RAW.filter(r=>r.banco===b&&r.tipo!=='CC').reduce((s,r)=>s+(r.months[mi]?.val||0),0));
+      const delta = vals[vals.length-1]-vals[0];
       const pct = vals[0]>0?(delta/vals[0]*100):0;
       return `<tr>
         <td><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${BANCO_COLORS[b]};margin-right:8px"></span>${b}</td>
@@ -1137,12 +1138,13 @@ function setBancoSort(s){ bancoSort=s; renderBancos(); }
 function clearTipoFilter(){ bancoTipoFilter=null; renderBancos(); }
 
 function getVal(r, mi) {
-  if (mi <= 3) return r.months[mi].val;
-  const base = r.months[3].val;
+  const lastReal = MONTHS.length - 1;
+  if (mi <= lastReal) return r.months[mi]?.val;
+  const base = r.months[lastReal]?.val;
   if (!base || base <= 0) return null;
   const key = r.banco + '||' + r.produto;
   const rate = (PROJ_RATES[key] ?? 1.0) / 100;
-  return base * Math.pow(1 + rate, mi - 3);
+  return base * Math.pow(1 + rate, mi - (MONTHS.length - 1));
 }
 
 function renderBancos(){
@@ -1267,7 +1269,7 @@ function renderBancos(){
           } else {
             // variação vs mês anterior: calcular a partir dos valores
             const prevVal = mi>0 ? (r.months[mi-1]?.val||null) : null;
-            const varPct = prevVal && prevVal>0 ? ((v - prevVal)/prevVal*100) : r.months[mi].var;
+            const varPct = prevVal && prevVal>0 ? ((v - prevVal)/prevVal*100) : r.months[mi]?.var;
             return `<tr>
               <td><span class="tag" style="background:${color}18;color:${color}">${TYPE_MAP[r.tipo]||r.tipo}</span></td>
               <td class="td-prod">${r.produto}</td>
@@ -1286,7 +1288,7 @@ function setVarMonth(i){ varMonth=i; renderVar(); }
 function renderVar(){
   renderTabs('varTabs', varMonth, 'setVarMonth');
   const mi = varMonth;
-  const rows = RAW.filter(r=>r.tipo!=='CC'&&r.months[mi].val!=null).map(r=>({...r,v:r.months[mi].var}));
+  const rows = RAW.filter(r=>r.tipo!=='CC'&&r.months[mi]?.val!=null).map(r=>({...r,v:r.months[mi]?.var}));
   const sorted = [...rows].sort((a,b)=>b.v-a.v);
   const top10 = sorted.slice(0,10);
   const bot10 = sorted.slice(-10).reverse();
@@ -1309,7 +1311,7 @@ function renderVar(){
         <td style="font-family:'IBM Plex Mono',monospace;color:var(--muted);font-size:11px">${String(i+1).padStart(2,'0')}</td>
         <td><span style="font-size:11px;color:${BANCO_COLORS[r.banco]||'var(--muted)'};font-weight:700">${r.banco}</span></td>
         <td class="td-prod">${r.produto.length>40?r.produto.slice(0,40)+'…':r.produto}</td>
-        <td class="r td-mono">${Rk(r.months[mi].val)}</td>
+        <td class="r td-mono">${Rk(r.months[mi]?.val)}</td>
         <td class="r td-mono ${r.v>0?'td-up':r.v<0?'td-dn':'td-neu'}">${Pp(r.v)}</td>
       </tr>`;
     }).join('')}</tbody>
@@ -1999,12 +2001,19 @@ Essa ação remove o mês do histórico real e não pode ser desfeita.`;
       `<div class="pulse"></div> ${MONTHS[0]} → ${MONTHS[MONTHS.length-1]}`;
   }
 
-  // Re-renderizar todos os painéis e gestão
+  // Garantir que os índices de mês estejam dentro dos limites
+  const maxRealIdx = Math.max(0, MONTHS.length - 1);
+  dashMonth  = Math.min(dashMonth,  maxRealIdx);
+  bancoMonth = Math.min(bancoMonth, maxRealIdx);
+  varMonth   = Math.min(varMonth,   maxRealIdx);
+
+  // Forçar re-render de todos os painéis com os dados atualizados
   renderDash();
   renderEvo();
   renderBancos();
   renderVar();
   renderGestao();
+
   setTimeout(() => { statusEl.textContent = ''; }, 4000);
 }
 
